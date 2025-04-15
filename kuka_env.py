@@ -15,15 +15,14 @@ from gymnasium.core import ObsType, RenderFrame, ActType
 
 @dataclass
 class WorldConfig:
-    plane_urdf_path: str = "plane.urdf"
-    table_urdf_path: str = ""
-    robo_urdf_path: str = "kuka_iiwa/model.urdf"
-
     table_position = [0, 0, 0]
     table_orientation = [0, 0, 0]
     robo_position = [0,0,0]
     robo_orientation = [0,0,0]
 
+    plane_urdf_path: str = "plane.urdf"
+    table_urdf_path: str = ""
+    robo_urdf_path: str = "kuka_iiwa/model.urdf"
 
 class KukaEnv(gym.Env):
 
@@ -147,23 +146,28 @@ class KukaEnv(gym.Env):
     def render(self, mode="rgb_array") -> RenderFrame | list[RenderFrame] | None:
         if mode != "rgb_array":
             return np.array([])
-
         base_pos, orn = p.getBasePositionAndOrientation(self._robotId)
-        view_matrix = p.computeViewMatrixFromYawPitchRoll(cameraTargetPositions=base_pos,
-                                                          distance=1.6,
-                                                          yaw=-123,
-                                                          pitch=217.7,
-                                                          roll=0,
-                                                          upAxisIndex=2)
-        proj_matrix = p.computeProjectionMatrixFOV(fov=60,
-                                                   aspect=float(self.RENDER_WIDTH) / self.RENDER_HEIGHT,
-                                                   nearVal=0.1,
-                                                   farVal=100.0)
-        (_, _, px, _, _) = p.getCameraImage(width=self.RENDER_WIDTH,
-                                            height=self.RENDER_HEIGHT,
-                                            viewMatrix=view_matrix,
-                                            projectionMatrix=proj_matrix,
-                                            renderer=p.ER_BULLET_HARDWARE_OPENGL)
+        view_matrix = p.computeViewMatrixFromYawPitchRoll(
+            cameraTargetPosition=base_pos,
+            distance=1.6,
+            yaw=-123,
+            pitch=217.7,
+            roll=0,
+            upAxisIndex=2
+        )
+        proj_matrix = p.computeProjectionMatrixFOV(
+            fov=60,
+            aspect=float(self.RENDER_WIDTH) / self.RENDER_HEIGHT,
+            nearVal=0.1,
+            farVal=100.0
+        )
+        (_, _, px, _, _) = p.getCameraImage(
+            width=self.RENDER_WIDTH,
+            height=self.RENDER_HEIGHT,
+            viewMatrix=view_matrix,
+            projectionMatrix=proj_matrix,
+            renderer=p.ER_BULLET_HARDWARE_OPENGL
+        )
 
         rgb_array = np.array(px, dtype=np.uint8)
         rgb_array = np.reshape(rgb_array, (self.RENDER_HEIGHT, self.RENDER_WIDTH, 4))
