@@ -8,9 +8,9 @@ import pybullet_data
 
 from gymnasium import spaces
 from dataclasses import dataclass
-from typing import List, Tuple, Optional, Any
+from typing import List, Tuple, Any, SupportsFloat
 
-from gymnasium.core import ObsType
+from gymnasium.core import ObsType, RenderFrame, ActType
 
 
 @dataclass
@@ -25,14 +25,15 @@ class WorldConfig:
     robo_orientation = [0,0,0]
 
 
-
-
 class KukaEnv(gym.Env):
 
     metadata = {
         "render.modes": ["human", "rgb_array"],
         "video.frames_per_second": 60
     }
+
+    RENDER_WIDTH = 640
+    RENDER_HEIGHT = 480
 
     def __init__(self,
                  urdf_root: str = pybullet_data.getDataPath(),
@@ -51,7 +52,7 @@ class KukaEnv(gym.Env):
         self._world_config = world_config
         self._is_enable_self_collision = is_enable_self_collision
 
-        self.terminated = 0
+        self._max_distance = 0.2
         self._envStepCounter = 0
 
         self.__renders_setting()
@@ -86,13 +87,41 @@ class KukaEnv(gym.Env):
             }
         )
 
+    def step(self, action: ActType) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
+
+        for i in range(self._numJoints):
+            p.setJointMotorControl2(bodyIndex=self._robotId,
+                                    jointIndex=i,
+                                    controlMode=p.POSITION_CONTROL,
+                                    targetPosition=action[i],
+                                    force=800)
+        end_effector_pos = self.__get_end_effector_position()
+        p.resetBasePositionAndOrientation(bodyUniqueId=self._end_effector_shaped_id,
+                                          posObj=end_effector_pos,
+                                          ornObj=[0, 0, 0, 1])
+        self._envStepCounter += 1
+        p.stepSimulation()
+
+
+        if self._renders:
+            time.sleep(self._dt)
+
+
+
+        self._observation = self._get_observations()
+        self._info = self._get_info()
+        reward = self.__calculate_reward()
+        truncated = False
+        terminated = (self._envStepCounter >= self._max_steps or self.__get_distance() <= self._max_distance)
+
+        return self._observation, reward, terminated, truncated, self._info
+
     def reset(self,
               seed: int | None = None,
               options: dict[str, Any] | None = None) -> tuple[ObsType, dict[str, Any]]:
 
         super().reset(seed=seed, options=options)
 
-        self.terminated = 0
         p.resetSimulation()
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
         p.setGravity(0,0, -9.8)
@@ -115,10 +144,36 @@ class KukaEnv(gym.Env):
 
         return self._observation, self._info
 
-    def close(self):
+    def render(self, mode="rgb_array") -> RenderFrame | list[RenderFrame] | None:
+        if mode != "rgb_array":
+            return np.array([])
+
+        base_pos, orn = p.getBasePositionAndOrientation(self._robotId)
+        view_matrix = p.computeViewMatrixFromYawPitchRoll(cameraTargetPositions=base_pos,
+                                                          distance=1.6,
+                                                          yaw=-123,
+                                                          pitch=217.7,
+                                                          roll=0,
+                                                          upAxisIndex=2)
+        proj_matrix = p.computeProjectionMatrixFOV(fov=60,
+                                                   aspect=float(self.RENDER_WIDTH) / self.RENDER_HEIGHT,
+                                                   nearVal=0.1,
+                                                   farVal=100.0)
+        (_, _, px, _, _) = p.getCameraImage(width=self.RENDER_WIDTH,
+                                            height=self.RENDER_HEIGHT,
+                                            viewMatrix=view_matrix,
+                                            projectionMatrix=proj_matrix,
+                                            renderer=p.ER_BULLET_HARDWARE_OPENGL)
+
+        rgb_array = np.array(px, dtype=np.uint8)
+        rgb_array = np.reshape(rgb_array, (self.RENDER_HEIGHT, self.RENDER_WIDTH, 4))
+
+        return rgb_array[:, :, :3]
+
+    def close(self) -> None:
         p.disconnect()
 
-    def _get_observations(self):
+    def _get_observations(self) -> dict:
         joint_states = p.getJointStates(self._robotId, range(self._numJoints))
         joint_positions = np.array([state[0] for state in joint_states], dtype=np.float32)
 
@@ -128,9 +183,9 @@ class KukaEnv(gym.Env):
             "target_positions": self._target_positions,
         }
 
-    def _get_info(self):
+    def _get_info(self) -> dict:
         return {
-            "distance": np.linalg.norm(self.__get_end_effector_position() - self._target_positions, ord=1)
+            "distance": self.__get_distance()
         }
 
     def _generate_world_entities(self,
@@ -146,7 +201,7 @@ class KukaEnv(gym.Env):
             base_robo_position = [0, 0, 0]
 
         flag = p.URDF_USE_SELF_COLLISION if self._is_enable_self_collision else 0
-        p.loadURDF(fileName=plane_urdf_path)
+        self.planeid = p.loadURDF(fileName=plane_urdf_path)
         self._robotId = p.loadURDF(fileName=robo_urdf_path,
                                   basePosition=base_robo_position,
                                   baseOrientation=p.getQuaternionFromEuler(base_robo_orientation),
@@ -169,7 +224,18 @@ class KukaEnv(gym.Env):
         # if table_urdf_path != "":
         #     self.tableid = p.loadURDF()
 
-    def __generate_target_positions(self):
+    def __calculate_reward(self) -> float:
+        end_effector_pos = self.__get_end_effector_position()
+        distance_to_target = self.__get_distance()
+
+        reward = -distance_to_target * 100
+
+        if distance_to_target <= self._max_distance:
+            reward += 1000
+
+        return reward
+
+    def __generate_target_positions(self) -> None:
         self._target_positions = np.array([0.7, 0.0, 0.5], dtype=np.float32)
         target_visual_shaped_id = p.createVisualShape(shapeType=p.GEOM_SPHERE,
                                                       radius=0.05,
@@ -195,6 +261,9 @@ class KukaEnv(gym.Env):
 
         return np.array(low_joints, dtype=np.float32), np.array(high_joints, dtype=np.float32)
 
+    def __get_distance(self) -> np.float32:
+        return np.linalg.norm(self.__get_end_effector_position() - self._target_positions, ord=1)
+
     def __renders_setting(self) -> None:
         if self._renders:
             cid = p.connect(p.SHARED_MEMORY)
@@ -207,14 +276,15 @@ class KukaEnv(gym.Env):
         else:
             p.connect(p.DIRECT)
 
-
 if __name__ == "__main__":
     env = KukaEnv(renders=True,
                   is_enable_self_collision=False)
 
     observation, info = env.reset()
 
-    print(observation)
-    print(info)
+    for i in range(10000):
+        action = env.action_space.sample()
+        observation, reward, terminated, truncated, info = env.step(action)
+        print(reward)
 
     # time.sleep(10)
