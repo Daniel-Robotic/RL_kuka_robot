@@ -202,6 +202,8 @@ class KukaEnv(gym.Env):
                                       base_robo_orientation=self._world_config.robo_orientation)
         self.__generate_target_positions()
 
+        self._goal_reached = False
+        self._steps_after_goal = 0
         self._envStepCounter = 0
         p.stepSimulation()
 
