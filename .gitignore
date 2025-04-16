@@ -3,3 +3,6 @@ venv
 .gigaide
 ppo_kuka_tensorboard
 ppo_kuka.zip
+logs
+
+*.zip
