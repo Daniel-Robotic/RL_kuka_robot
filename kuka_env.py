@@ -46,6 +46,7 @@ class KukaEnv(gym.Env):
         self._dt = dt
         self._info = {}
         self._observation = {}
+        self._last_action = None
         self._renders = renders
         self._urdf_root = urdf_root
         self._max_steps = max_steps
@@ -302,7 +303,7 @@ class KukaEnv(gym.Env):
         self._jointIndices = [p.getJointInfo(self._robotId, i)[0] for i in range(self._numJoints)]
         self._endEffectorIndex = self._numJoints - 1
 
-        # Отслеживание коннечного эффектора
+        # Отслеживание конечного эффектора
         end_effector_visual_shaped_id = p.createVisualShape(shapeType=p.GEOM_SPHERE,
                                                             radius=0.05,
                                                             rgbaColor=[0, 0, 1, 1])
