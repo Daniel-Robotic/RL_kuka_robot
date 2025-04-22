@@ -10,7 +10,7 @@ class EnvConfig(BaseModel):
     time_step: float = Field(default=0.01, alias="timeStep")
     n_steps: int = Field(default=1000, alias="nSteps")
     gravity: Tuple[float, float, float] = Field(default=(0, 0, -9.81), alias="gravity")
-    max_check_distance_link: float = Field(default=0.2, alias="maxCheckDistanceLink")
+    max_check_distance_link: float = Field(default=0.3, alias="maxCheckDistanceLink")
     max_check_distance: float = Field(default=0.1, alias="maxCheckDistance")
     max_check_angle_deg: float = Field(default=10, alias="maxCheckAngleDeg")
     max_duration_seconds: float = Field(default=30, alias="maxDurationSeconds")

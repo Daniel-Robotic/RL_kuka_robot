@@ -31,6 +31,7 @@ class KukaEnv(gym.Env):
 
         # Robot params
         self._num_joints = 7
+        self._joint_limits = []
         self._joint_indices = []
         self._target_position = []
         self._target_orientation = []
@@ -46,15 +47,14 @@ class KukaEnv(gym.Env):
         # Rewards params
         self._K_D = 10      # вес расстояния
         self._K_A = 100     # вес ориентации
-        self._K1 = 2000     # штраф за сближение звеньев
-        self._K2 = 20
-        self._last_U = 0    # потенциал на предыдущем шаге
+        self._last_U = np.inf    # потенциал на предыдущем шаге
 
         # Rendering configurations
         self._render_setting()
 
         # Action space
-        self.action_space = spaces.Box(low=-0.05, high=0.05, shape=(self._num_joints, ), dtype=np.float32)
+        # TODO: Нужно ли менять шаг на 0.01
+        self.action_space = spaces.Box(low=-0.01, high=0.1, shape=(self._num_joints, ), dtype=np.float32)
 
         # Observation space
         # theta joint angels = 7
@@ -81,7 +81,8 @@ class KukaEnv(gym.Env):
                 self._robot_id,
                 joint_id,
                 p.POSITION_CONTROL,
-                targetPosition=target_pos
+                targetPosition=target_pos,
+                force=self._num_joints * 100
             )
 
         p.stepSimulation()
@@ -126,7 +127,7 @@ class KukaEnv(gym.Env):
         self._load_environment()
         self._calc_distance()
         self._calc_angel_error()
-        self._artificial_potential_field = 0
+        # self._artificial_potential_field = 0
 
         for joint_id in range(self._num_joints):
             p.resetJointState(self._robot_id, joint_id, targetValue=0)
@@ -177,6 +178,12 @@ class KukaEnv(gym.Env):
         self._num_joints = p.getNumJoints(self._robot_id)
         self._joint_indices = [p.getJointInfo(self._robot_id, i)[0] for i in range(self._num_joints)]
         self._end_effector_index = self._num_joints - 1
+
+        # Получение ограничений по суставам
+        for i in range(self._num_joints):
+            joint_info = p.getJointInfo(self._robot_id, i)
+            lower_limit, upper_limit = joint_info[8], joint_info[9]
+            self._joint_limits.append((lower_limit, upper_limit))
 
         # Target object configuration
         shape_cfg = self._config.target_shape
@@ -259,52 +266,29 @@ class KukaEnv(gym.Env):
         return position, orientation
 
     def _calc_reward(self) -> float:
-        # Потенциал текущий
         self._calc_artificial_potential_field()
-        U_t = self._artificial_potential_field
+
         U_prev = self._last_U
-        self._last_U = U_t  # сохранить для следующего шага
+        self._last_U = self._artificial_potential_field
 
-        # Расчет штрафа за возможную самоколлизию
-        d_min = self._calc_min_link_distance()
-        if d_min <= 0.1:
-            r_d = -0.1
-        elif d_min <= 0.2:
-            r_d = -1 / (self._K1 * d_min**2 + self._K2)
-        else:
-            r_d = 0.0
+        # === Штраф за выход за пределы суставов ===
+        joint_states = p.getJointStates(self._robot_id, range(self._num_joints))
+        joint_angles = [s[0] for s in joint_states]
 
-        return (U_t - U_prev) + r_d
+        r_j = 0.0
+        for i, angle in enumerate(joint_angles):
+            low, high = self._joint_limits[i]
+            if low < high and (angle < low or angle > high):
+                r_j -= 1.0
+
+        reward = (self._artificial_potential_field - U_prev) + r_j
+
+        return reward
 
     def _calc_artificial_potential_field(self) -> None:
         d = self._distance_target_to_ee_pos
         a = self._angel_error
         self._artificial_potential_field = -self._K_D * d + self._K_A / ((d + 1) * (a + 1))
-
-    def _calc_min_link_distance(self) -> float:
-        """
-        Вычисляет минимальное расстояние между звеньями робота
-        с использованием pybullet.getClosestPoints.
-        """
-        min_distance = float('inf')
-
-        for i in range(self._num_joints):
-            for j in range(i + 1, self._num_joints):
-                points = p.getClosestPoints(
-                    bodyA=self._robot_id,
-                    bodyB=self._robot_id,
-                    distance=self._config.max_check_distance_link,
-                    linkIndexA=i,
-                    linkIndexB=j
-                )
-
-                if points:
-                    # Берем минимальное расстояние среди найденных точек
-                    closest = min(point[8] for point in points)  # index 8 = distance
-                    if closest < min_distance:
-                        min_distance = closest
-
-        return min_distance if min_distance != float('inf') else self._config.max_check_distance_link
 
     def _calc_distance(self) -> None:
         self._distance_target_to_ee_pos = np.linalg.norm(self._get_end_effector_position()[0] - self._target_position)
@@ -337,7 +321,7 @@ if __name__ == "__main__":
             "robot_description": {
                 "file_name": "kuka_iiwa/model.urdf",
                 "use_fixed_base": True,
-                "flags": p.URDF_USE_SELF_COLLISION
+                "flags": p.URDF_USE_SELF_COLLISION_EXCLUDE_PARENT
             }
         },
         "target_shape": {
@@ -360,6 +344,8 @@ if __name__ == "__main__":
     while True:
         action = env.action_space.sample()
         observ, rew, term, trunc, info = env.step(action)
+        # print(rew)
+        # break
 
         if term or trunc:
             observ, info = env.reset()
