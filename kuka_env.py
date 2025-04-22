@@ -83,7 +83,9 @@ class KukaEnv(gym.Env):
                 p.POSITION_CONTROL,
                 targetPosition=target_pos
             )
+
         p.stepSimulation()
+        self._step_counter += 1
         time.sleep(self._config.time_step) if self._renders else None
 
         # Вычислить вознаграждение
@@ -355,14 +357,13 @@ if __name__ == "__main__":
     env = KukaEnv(renders=True, **params)
     obs, inf = env.reset()
 
-    for i in range(1000):
+    while True:
         action = env.action_space.sample()
         observ, rew, term, trunc, info = env.step(action)
 
-        print(f"Step: {i}", info)
-
         if term or trunc:
             observ, info = env.reset()
+            break
 
     env.close()
 
