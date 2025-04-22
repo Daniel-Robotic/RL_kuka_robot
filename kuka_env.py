@@ -40,6 +40,8 @@ class KukaEnv(gym.Env):
         self._angel_error = 0
         self._distance_target_to_ee_pos = 0
         self._artificial_potential_field = 0
+        self._step_counter = 0
+        self._max_duration_seconds = self._config.max_duration_seconds  # максимум 30 секунд симуляции
 
         # Rewards params
         self._K_D = 10      # вес расстояния
@@ -98,9 +100,15 @@ class KukaEnv(gym.Env):
             self._draw_axes(self._target_position, self._target_orientation, length=0.15)
 
         # Условия завершения
-        # TODO: Добавить условия завершения
-        terminated = False
-        truncated = False
+
+        terminated = (self._distance_target_to_ee_pos < self._config.max_check_distance and
+                      self._angel_error < np.deg2rad(self._config.max_check_angle_deg))
+
+        sim_time = self._step_counter * self._config.time_step
+        truncated = sim_time >= self._max_duration_seconds
+
+        if terminated or truncated:
+            self._step_counter = 0  # сброс счётчика эпизода
 
         return self._get_obs(), reward, terminated, truncated, self._get_info()
 
